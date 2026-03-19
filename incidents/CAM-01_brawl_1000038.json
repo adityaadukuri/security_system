@@ -1,0 +1,22 @@
+{
+  "id": "CAM-01_brawl_1000038",
+  "camera_id": "CAM-01",
+  "threat_type": "brawl",
+  "severity": "high",
+  "confidence": 0.7911158800125122,
+  "timestamp": "video+0:00:38",
+  "bbox": [
+    0,
+    0,
+    868,
+    540
+  ],
+  "track_id": null,
+  "frame_path": null,
+  "actions": [
+    "deter:audio_alarm",
+    "notify:personnel",
+    "notify:police"
+  ],
+  "resolved": false
+}

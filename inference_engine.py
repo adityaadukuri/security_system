@@ -84,6 +84,13 @@ THREAT_CONFIG = {
         "notify_personnel": True,
         "notify_police":    True,
     },
+    "breaking_in": {
+        "min_duration_s":   0,
+        "severity":         "critical",
+        "deter_action":     "lock_gates",
+        "notify_personnel": True,
+        "notify_police":    True,
+    },
 }
 
 CONFIDENCE_THRESHOLD = 0.45

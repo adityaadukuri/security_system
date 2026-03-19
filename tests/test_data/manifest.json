@@ -1,0 +1,214 @@
+[
+  {
+    "scene": "loitering",
+    "image_path": "test_data/images/person/loitering.jpg",
+    "detections": [
+      {
+        "class": "person",
+        "cls_id": 0,
+        "bbox": [
+          255,
+          255,
+          385,
+          395
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "brawl",
+    "image_path": "test_data/images/brawl/brawl.jpg",
+    "detections": [
+      {
+        "class": "brawl",
+        "cls_id": 2,
+        "bbox": [
+          215,
+          245,
+          435,
+          395
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "fire",
+    "image_path": "test_data/images/fire/fire.jpg",
+    "detections": [
+      {
+        "class": "fire",
+        "cls_id": 4,
+        "bbox": [
+          190,
+          160,
+          450,
+          430
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "smoke",
+    "image_path": "test_data/images/smoke/smoke.jpg",
+    "detections": [
+      {
+        "class": "smoke",
+        "cls_id": 5,
+        "bbox": [
+          170,
+          60,
+          470,
+          280
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "abandoned_bag",
+    "image_path": "test_data/images/abandoned_bag/abandoned_bag.jpg",
+    "detections": [
+      {
+        "class": "abandoned_bag",
+        "cls_id": 3,
+        "bbox": [
+          270,
+          348,
+          390,
+          430
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "crowd_surge",
+    "image_path": "test_data/images/crowd_surge/crowd_surge.jpg",
+    "detections": [
+      {
+        "class": "crowd_surge",
+        "cls_id": 6,
+        "bbox": [
+          160,
+          265,
+          495,
+          400
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "weapon",
+    "image_path": "test_data/images/weapon/weapon.jpg",
+    "detections": [
+      {
+        "class": "weapon",
+        "cls_id": 7,
+        "bbox": [
+          285,
+          210,
+          425,
+          395
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "vehicle_intrusion",
+    "image_path": "test_data/images/vehicle_intrusion/vehicle_intrusion.jpg",
+    "detections": [
+      {
+        "class": "vehicle_intrusion",
+        "cls_id": 8,
+        "bbox": [
+          80,
+          248,
+          520,
+          445
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "graffiti_vandalism",
+    "image_path": "test_data/images/graffiti_vandalism/graffiti_vandalism.jpg",
+    "detections": [
+      {
+        "class": "graffiti_vandalism",
+        "cls_id": 9,
+        "bbox": [
+          40,
+          40,
+          600,
+          440
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "suspicious_package",
+    "image_path": "test_data/images/suspicious_package/suspicious_package.jpg",
+    "detections": [
+      {
+        "class": "suspicious_package",
+        "cls_id": 10,
+        "bbox": [
+          240,
+          295,
+          400,
+          440
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "person_with_fire",
+    "image_path": "test_data/images/person/person_with_fire.jpg",
+    "detections": [
+      {
+        "class": "person",
+        "cls_id": 0,
+        "bbox": [
+          130,
+          255,
+          230,
+          395
+        ]
+      },
+      {
+        "class": "fire",
+        "cls_id": 4,
+        "bbox": [
+          358,
+          195,
+          525,
+          432
+        ]
+      }
+    ]
+  },
+  {
+    "scene": "multiple_loiterers",
+    "image_path": "test_data/images/person/multiple_loiterers.jpg",
+    "detections": [
+      {
+        "class": "person",
+        "cls_id": 0,
+        "bbox": [
+          205,
+          258,
+          315,
+          395
+        ]
+      },
+      {
+        "class": "person",
+        "cls_id": 0,
+        "bbox": [
+          325,
+          262,
+          435,
+          393
+        ]
+      }
+    ]
+  }
+]

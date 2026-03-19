@@ -1,0 +1,22 @@
+{
+  "id": "CAM-01_breaking_in_1000038",
+  "camera_id": "CAM-01",
+  "threat_type": "breaking_in",
+  "severity": "critical",
+  "confidence": 0.3704918920993805,
+  "timestamp": "video+0:00:38",
+  "bbox": [
+    289.043701171875,
+    167.29124450683594,
+    370.40460205078125,
+    455.1912841796875
+  ],
+  "track_id": 70,
+  "frame_path": null,
+  "actions": [
+    "deter:lock_gates",
+    "notify:personnel",
+    "notify:police"
+  ],
+  "resolved": false
+}

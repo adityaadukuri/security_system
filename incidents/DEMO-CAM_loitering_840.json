@@ -1,0 +1,21 @@
+{
+  "id": "DEMO-CAM_loitering_840",
+  "camera_id": "DEMO-CAM",
+  "threat_type": "loitering",
+  "severity": "medium",
+  "confidence": 0.0,
+  "timestamp": "demo+42.0s",
+  "bbox": [
+    640.0,
+    264.0,
+    720.0,
+    503.0
+  ],
+  "track_id": 1,
+  "frame_path": "demo_output/evidence_DEMO-CAM_loitering.jpg",
+  "actions": [
+    "deter:audio_warning",
+    "notify:personnel"
+  ],
+  "resolved": false
+}
