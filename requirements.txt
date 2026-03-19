@@ -1,0 +1,22 @@
+# Core AI / CV
+ultralytics>=8.2.0          # YOLOv8/v10 training & inference
+torch>=2.1.0
+torchvision>=0.16.0
+opencv-python>=4.9.0
+supervision>=0.19.0         # annotation & tracking utilities
+numpy>=1.26.0
+
+# Dataset tools
+roboflow                    # dataset download & annotation
+PyYAML>=6.0
+
+# API / serving
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+websockets>=12.0
+python-multipart>=0.0.9
+
+# Alerting integrations
+requests>=2.31.0
+paho-mqtt>=2.0.0            # IoT deterrence device control
+twilio>=9.0.0               # SMS alerts to personnel/police
