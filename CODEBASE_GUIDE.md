@@ -4,17 +4,22 @@
 
 1. [What This System Does](#1-what-this-system-does)
 2. [Repository Layout](#2-repository-layout)
-3. [How the Two Pipelines Work](#3-how-the-two-pipelines-work)
+3. [How the Pipelines Work](#3-how-the-pipelines-work)
    - [Training Pipeline](#31-training-pipeline-train_custom_modelpy)
-   - [Inference Pipeline](#32-inference-pipeline-inference_enginepy)
-4. [File-by-File Reference](#4-file-by-file-reference)
-5. [Data Flow: Frame to Police Alert](#5-data-flow-frame-to-police-alert)
-6. [Threat Catalogue](#6-threat-catalogue)
-7. [Key Design Decisions](#7-key-design-decisions)
-8. [Test Suite Architecture](#8-test-suite-architecture)
-9. [Known Gaps and Extension Points](#9-known-gaps-and-extension-points)
-10. [Dependency Map](#10-dependency-map)
-11. [Quickstart](#11-quickstart)
+   - [Inference Engine](#32-inference-pipeline-inference_enginepy)
+   - [Zone-Based Video Command Center](#33-zone-based-video-command-center-video_command_centerpy)
+   - [Pose-Based Command Center](#34-pose-based-command-center-pose_command_centerpy)
+   - [Loitering Demo](#35-loitering-demo-demo_loiteringpy)
+4. [Detection Approach: Zone vs Pose](#4-detection-approach-zone-vs-pose)
+5. [Pose Model Architecture](#5-pose-model-architecture)
+6. [File-by-File Reference](#6-file-by-file-reference)
+7. [Data Flow: Frame to Police Alert](#7-data-flow-frame-to-police-alert)
+8. [Threat Catalogue](#8-threat-catalogue)
+9. [Key Design Decisions](#9-key-design-decisions)
+10. [Test Suite Architecture](#10-test-suite-architecture)
+11. [Known Gaps and Extension Points](#11-known-gaps-and-extension-points)
+12. [Dependency Map](#12-dependency-map)
+13. [Quickstart](#13-quickstart)
 
 ---
 
@@ -22,19 +27,20 @@
 
 This is a **real-time AI-powered public-area security system** that:
 
-1. Watches multiple camera streams simultaneously (RTSP IP cameras or local devices).
-2. Runs a custom-trained YOLOv8 neural network on every frame to detect 11 security-relevant classes of objects and events.
-3. Applies post-processing logic — loitering duration tracking, rate limiting, severity classification.
+1. Watches camera streams (RTSP IP cameras, local devices, or recorded video files).
+2. Detects 11 security-relevant threat classes using a custom-trained YOLOv8 model **or** uses a pretrained YOLOv8-pose model to classify body activity directly from skeleton keypoints.
+3. Applies post-processing logic — loitering duration tracking, activity classification, rate limiting, severity routing.
 4. Triggers physical deterrence devices (speakers, sprinklers, barriers, gates) over MQTT/REST.
 5. Notifies security personnel, police, and fire services in real time.
-6. Saves evidence frames (JPEG) and incident records (JSON) to disk for audit.
+6. Saves evidence frames (JPEG) and incident records (JSON) for audit.
+7. Renders a **Command Center UI** showing annotated video, alert log, threat counters, and activity breakdown.
 
-The system is built in two layers that are used sequentially:
+The system has evolved through three detection generations:
 
 ```
-LAYER 1 — Training (offline)         LAYER 2 — Inference (live)
-─────────────────────────────         ─────────────────────────────
-Labelled footage  →  train_custom_model.py  →  best.pt  →  inference_engine.py  →  alerts
+Gen 1 — Class-based         inference_engine.py        "brawl" detected as a class
+Gen 2 — Zone-based          video_command_center.py    person enters rectangle → alert
+Gen 3 — Pose/Activity-based pose_command_center.py     skeleton keypoints → activity → threat
 ```
 
 ---
@@ -44,46 +50,48 @@ Labelled footage  →  train_custom_model.py  →  best.pt  →  inference_engin
 ```
 security_system/
 │
-├── inference_engine.py        ← LIVE SYSTEM: camera reading, detection, alerting
-├── train_custom_model.py      ← OFFLINE TOOL: fine-tune YOLOv8 on your own footage
-├── requirements.txt           ← All Python package dependencies
-├── setup_venv.sh              ← One-shot script to create .venv and install deps
+├── inference_engine.py        ← LIVE SYSTEM: RTSP cameras, detection, alerting
+├── train_custom_model.py      ← OFFLINE: fine-tune YOLOv8 on your own footage
+├── video_command_center.py    ← VIDEO TOOL: zone-based analysis on recorded video
+├── pose_command_center.py     ← VIDEO TOOL: pose/activity-based analysis (no zones)
+├── demo_loitering.py          ← DEMO: synthetic moving-person loitering demo
+│
+├── requirements.txt           ← Python package dependencies
+├── setup_venv.sh              ← Creates venv and installs all deps
 ├── pytest.ini                 ← Pytest configuration
 ├── CODEBASE_GUIDE.md          ← This document
 │
 ├── tests/
-│   ├── conftest.py            ← Shared pytest fixtures and YOLO mock helpers
-│   ├── generate_test_images.py← Creates synthetic JPEG test images for every threat
+│   ├── conftest.py                 ← Shared pytest fixtures and YOLO mock helpers
+│   ├── generate_test_images.py     ← Creates synthetic JPEG test images
 │   ├── test_loitering_tracker.py   ← Unit tests: dwell-time logic
 │   ├── test_alert_dispatcher.py    ← Unit tests: notification routing & persistence
 │   ├── test_inference_pipeline.py  ← Integration tests: frame→detection→incident
 │   └── test_threat_scenarios.py    ← End-to-end: synthetic image → full dispatch
 │
 ├── tests/test_data/           ← Auto-generated by generate_test_images.py
-│   ├── images/<class>/        ← Synthetic JPEG images, one per threat type
+│   ├── images/<class>/        ← Synthetic JPEG images per threat type
 │   ├── labels/<class>/        ← YOLO-format annotation .txt files
 │   └── manifest.json          ← Ground-truth mapping: scene → expected detections
 │
+├── demo_output/               ← (runtime) Output videos from demos and command centers
+├── evidence/                  ← (runtime) Evidence JPEGs saved per incident
+├── incidents/                 ← (runtime) JSON records per incident
+│
 ├── dataset/                   ← (you provide) Labelled training images
-│   ├── images/train/
-│   ├── images/val/
-│   ├── images/test/
+│   ├── images/{train,val,test}/
 │   └── security_dataset.yaml  ← Auto-generated by create_dataset_yaml()
 │
-├── evidence/                  ← (runtime) Evidence JPEGs saved per incident
-├── incidents/                 ← (runtime) JSON records saved per incident
 └── security-model/<run>/      ← (runtime) YOLOv8 training outputs, best.pt here
 ```
 
 ---
 
-## 3. How the Two Pipelines Work
+## 3. How the Pipelines Work
 
 ### 3.1 Training Pipeline — `train_custom_model.py`
 
-**Purpose:** Take your own annotated security camera footage and fine-tune a YOLOv8 model that understands your specific environment (lighting, angles, crowd density, camera positions).
-
-**Three functions, used in sequence:**
+**Purpose:** Fine-tune a YOLOv8 model on your own annotated security footage so it learns your specific environment — lighting, angles, crowd patterns.
 
 ```
 create_dataset_yaml()  →  train()  →  export_for_edge()
@@ -91,7 +99,7 @@ create_dataset_yaml()  →  train()  →  export_for_edge()
 
 #### `create_dataset_yaml(train_path, val_path, test_path, output_path)`
 
-Writes a YAML file that tells YOLOv8 where the training data lives and what the 11 class labels are:
+Writes a YAML file with the 11 class labels:
 
 | ID | Class Name           | Meaning                              |
 |----|----------------------|--------------------------------------|
@@ -109,61 +117,48 @@ Writes a YAML file that tells YOLOv8 where the training data lives and what the 
 
 #### `train(dataset_yaml, base_model, epochs, img_size, batch_size, device)`
 
-Fine-tunes the selected YOLOv8 variant (nano/small/medium/large) using:
-- **Mosaic augmentation** (1.0): tiles 4 images together — makes the model robust to partially visible threats.
-- **MixUp** (0.15): blends two images — helps generalise to overlapping objects (e.g., brawl).
-- **Flip/Rotate/HSV shifts**: handles different camera angles and lighting.
-- **Early stopping** at patience=20: stops training if mAP stops improving.
-- Saves checkpoint every 10 epochs. Best weights go to `security-model/<run>/weights/best.pt`.
+Fine-tunes the selected YOLOv8 variant with security augmentations:
+- **Mosaic** (1.0): tiles 4 images — robust to partial occlusion.
+- **MixUp** (0.15): blends two images — helps overlapping objects (brawls).
+- **Flip/Rotate/HSV shifts**: handles different angles and lighting.
+- **Early stopping** at patience=20. Best weights → `security-model/<run>/weights/best.pt`.
 
 #### `export_for_edge(model_path, format)`
 
-Converts `best.pt` (PyTorch) to a deployment-optimised format:
-
-| Format     | Use case                                  |
+| Format     | Target platform                           |
 |------------|-------------------------------------------|
 | `onnx`     | Any platform (CPU or GPU)                 |
 | `engine`   | NVIDIA Jetson / TensorRT (fastest GPU)    |
 | `openvino` | Intel NUC / edge CPU                      |
-| `coreml`   | Apple Silicon Mac / iPhone                |
+| `coreml`   | Apple Silicon / iPhone                    |
 | `tflite`   | Raspberry Pi / microcontrollers           |
 
 ---
 
 ### 3.2 Inference Pipeline — `inference_engine.py`
 
-**Purpose:** Run 24/7 on a server or edge device, watch all cameras, detect threats, and take action.
+**Purpose:** 24/7 live monitoring of RTSP camera streams.
 
-#### Configuration constants (top of file)
+#### Configuration
 
 ```python
-CONFIDENCE_THRESHOLD = 0.45          # YOLO ignores detections below this
-LOITERING_ZONE_RADIUS_PX = 80        # person must move >80px to reset loitering timer
+CONFIDENCE_THRESHOLD     = 0.45   # YOLO ignores detections below this
+LOITERING_ZONE_RADIUS_PX = 80     # person must move >80px to reset timer
 ```
 
-#### `THREAT_CONFIG` dictionary
-
-This is the central configuration that drives all downstream behaviour. For each of the 8 active threat types it defines:
-
-- `min_duration_s` — how long the threat must persist before an alert fires (0 = immediate)
-- `severity` — `"medium"`, `"high"`, or `"critical"`
-- `deter_action` — which physical deterrent to trigger
-- `notify_personnel / notify_police / notify_fire` — which services to contact
+#### `THREAT_CONFIG` — now includes `breaking_in`
 
 ```
-loitering        → 30s wait → audio_warning  → personnel only
-brawl            → immediate → audio_alarm   → personnel + police
-fire             → immediate → sprinkler     → personnel + police + fire
-smoke            → 5s        → audio_warning → personnel only
-abandoned_bag    → 60s       → announcement  → personnel + police
-crowd_surge      → 10s       → crowd_speaker → personnel only
-weapon           → immediate → lock_gates    → personnel + police
-vehicle_intrusion→ immediate → barrier_deploy→ personnel + police
+loitering         → 20s wait → audio_warning   → personnel
+brawl             → immediate → audio_alarm    → personnel + police
+fire              → immediate → sprinkler      → personnel + police + fire
+smoke             → 5s        → audio_warning  → personnel
+abandoned_bag     → 60s       → announcement   → personnel + police
+crowd_surge       → 10s       → crowd_speaker  → personnel
+weapon            → immediate → lock_gates     → personnel + police
+vehicle_intrusion → immediate → barrier_deploy → personnel + police
+breaking_in       → immediate → lock_gates     → personnel + police  ← added
 ```
-
-> **Note:** `graffiti_vandalism` and `suspicious_package` exist as training classes but are NOT yet in `THREAT_CONFIG`. The inference engine silently ignores them. This is a documented extension point.
-
----
 
 #### The Four Classes
 
@@ -176,407 +171,514 @@ CameraProcessor ──→ alert_queue ──→ AlertDispatcher
                                   evidence/*.jpg
 ```
 
----
-
-#### `LoiteringTracker`
-
-Tracks how long each person (identified by their ByteTrack `track_id`) has been standing in approximately the same spot.
-
-**Internal state:** `_tracks: Dict[int, {cx, cy, since}]`
-
-**`update(track_id, cx, cy) → float`**
-
-Each call computes the Euclidean distance from the last recorded position:
-- Distance > 80px → person has moved to a new zone → reset `since` to now → return 0.0
-- Distance ≤ 80px → person is still in same zone → return `now - since` (seconds)
-
-**`evict_stale(active_ids)`**
-
-Called after every frame. Removes tracking data for any `track_id` that YOLO no longer sees (person left the scene). Prevents memory leak on long-running streams.
+See [Section 7](#7-data-flow-frame-to-police-alert) for the full frame→alert data flow.
 
 ---
 
-#### `CameraProcessor`
+### 3.3 Zone-Based Video Command Center — `video_command_center.py`
 
-One instance per camera, runs in its own background thread.
+**Purpose:** Process a recorded video file and detect threats using bounding-box zone rules. Best used when camera positions are fixed and restricted areas are well-defined.
 
-**`start()` / `stop()`** — launch / kill the background thread.
+**Detection logic:**
+- **Loitering**: person centroid stays within 80px for ≥ 20s → alert
+- **Brawl**: ≥ 2 persons with centroids within 150px for ≥ 2s → alert
+- **Breaking-in**: person centroid enters a user-defined rectangular zone → immediate alert
 
-**`_run()`** — main loop:
-1. Opens the video source with `cv2.VideoCapture`.
-2. Reads frames in a loop.
-3. Skips every other frame (processes only even-numbered frames) — halves CPU load with minimal accuracy loss.
-4. Calls `_process_frame()` on each kept frame.
-5. On stream failure, sleeps 2s and reconnects.
+**Zone definition** (normalised 0–1 fractions of frame width/height):
+```bash
+# Default: left-wall zone — storefront/window area (8–38% width, full height)
+python video_command_center.py video.mp4
 
-**`_process_frame(frame, frame_idx)`** — the detection heart:
-
-```
-frame
-  └→ model.track(frame, conf=0.45, tracker="bytetrack.yaml", persist=True)
-        └→ for each detected box:
-              - read cls_id, confidence, bbox [x1,y1,x2,y2], track_id
-              - if track_id is None → skip (tracking required)
-              - if class == "person":
-                    cx,cy = centre of bbox
-                    loiter_s = LoiteringTracker.update(track_id, cx, cy)
-                    if loiter_s >= 30s → _maybe_raise("loitering")
-              - if class in THREAT_CONFIG (not "person"):
-                    → _maybe_raise(class_name)
-              - add track_id to active_ids
-        └→ LoiteringTracker.evict_stale(active_ids)
+# Custom zones (semicolon-separated)
+python video_command_center.py video.mp4 --zones "0.0,0.0,0.35,1.0;0.65,0.0,1.0,1.0"
 ```
 
-**`_maybe_raise(det, threat, frame, frame_idx, duration_s=0)`** — rate limiter:
+**Key parameters:**
 
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `LOITERING_THRESHOLD_S` | 20 s | Dwell time before loitering alert |
+| `BRAWL_MIN_DURATION_S`  | 2 s  | Proximity duration before brawl alert |
+| `BRAWL_PROXIMITY_PX`    | 150 px | Max centroid distance to form a brawl cluster |
+| `CONF_THRESHOLD`        | 0.20 | YOLO detection confidence (lower for night footage) |
+| `TARGET_H`              | 540 px | Video display height |
+
+**Command Center UI layout:**
 ```
-key = "{track_id}:{threat}"
-if now - last_alerted[key] < 60s → suppress (return without queuing)
-else:
-    last_alerted[key] = now
-    create Incident(...)
-    _save_evidence(frame) → evidence/<id>.jpg
-    alert_queue.put(incident)
+┌──────────────────────────────┬──────────────────────┐
+│  Annotated video feed        │  COMMAND CENTER      │
+│  · bounding boxes            │  Time + progress bar │
+│  · zone overlays             │  Active tracks       │
+│  · dwell bars                │  Threat counts       │
+│  · alert banners             │  Alert log           │
+└──────────────────────────────┴──────────────────────┘
+│  STATUS BAR: BREAK-IN: N  BRAWL: N  LOITERING: N    │
+└──────────────────────────────────────────────────────┘
 ```
 
-The 60-second cooldown prevents flooding operators with repeated alerts for the same ongoing event.
-
-**`_save_evidence(frame, inc_id) → str`** — writes the frame as a JPEG to `evidence/<inc_id>.jpg` at 90% quality. Returns the path stored in the Incident record.
+**Limitation:** Any person entering the zone triggers an alert regardless of what they are doing. A security guard, cleaner, or customer in that area will produce a false positive.
 
 ---
 
-#### `AlertDispatcher`
+### 3.4 Pose-Based Command Center — `pose_command_center.py`
 
-Consumes `Incident` objects from the queue (in the main thread) and takes action.
+**Purpose:** Process a recorded video using skeleton keypoints to understand *what* each person is doing, then map that activity to a security threat. **No predefined zones required.**
 
-**`dispatch(incident)`**
+**Model:** `yolov8n-pose.pt` — auto-downloads ~6 MB on first run.
 
-1. Looks up `THREAT_CONFIG[incident.threat_type]`.
-2. Calls `_trigger_deterrence(action, incident)` if a `deter_action` is configured.
-3. Calls `_notify_personnel(incident)` if configured.
-4. Calls `_notify_police(incident)` if configured.
-5. Calls `_notify_fire(incident)` if configured.
-6. Populates `incident.actions` list with what was done (e.g. `["deter:audio_alarm", "notify:personnel", "notify:police"]`).
-7. Calls `_save_incident(incident)` → writes `incidents/<id>.json`.
+**How it works:**
 
-The four `_notify_*` and `_trigger_deterrence` methods are **stubs** — they log a warning. You replace them with real integrations:
+```
+Each video frame
+    │
+    ▼
+YOLOv8n-pose
+    │  detects each person
+    │  outputs 17 COCO keypoints (x, y, confidence) per person
+    │  assigns persistent track_id via ByteTrack
+    │
+    ▼
+PoseActivityClassifier (per track_id)
+    │  maintains rolling 20-frame history of poses
+    │  computes signals from current keypoints + history:
+    │
+    │  torso_vert   — ratio of torso vertical extent to total (1.0=upright, 0.0=horizontal)
+    │  wrist_vel    — max wrist displacement over last 5 frames (px/frame)
+    │  body_vel     — hip centroid displacement over last 5 frames (px/frame)
+    │  arms_raised  — average wrist Y < average shoulder Y (wrists above shoulders)
+    │  crouching    — hip-to-ankle dist compressed relative to torso height
+    │
+    │  Classification priority:
+    │    torso_vert < 0.38              → "climbing"   (0.82 conf)
+    │    wrist_vel ≥ 10 px/frame        → "striking"   (0.78 conf)
+    │    wrist_vel ≥ 6 + arms_raised    → "fighting"   (0.75 conf)
+    │    body_vel ≥ 10 px/frame         → "running"    (0.72 conf)
+    │    crouching = True               → "crouching"  (0.68 conf)
+    │    body_vel < 2 px/frame          → "standing"   (0.82 conf)
+    │    otherwise                      → "walking"    (0.65 conf)
+    │
+    ▼
+Activity → Threat mapping
+    "climbing"  or "striking"  →  BREAKING-IN  (critical, immediate)
+    "fighting"  (sustained ≥2s) →  BRAWL        (high)
+    "standing"  (dwell ≥20s)    →  LOITERING    (medium, via LoiteringTracker)
+    "crouching"                 →  SUSPICIOUS   (low)
+    "running" / "walking"       →  no alert
+```
 
-| Method               | Real integration                            |
-|----------------------|---------------------------------------------|
-| `_trigger_deterrence`| MQTT publish to IoT controller / REST API   |
-| `_notify_personnel`  | FCM push notification / PagerDuty / WebSocket to dashboard |
-| `_notify_police`     | Emergency dispatch API / Twilio SMS         |
-| `_notify_fire`       | Fire department webhook / SMS               |
+**Why pose-based is better for surveillance:**
+
+| Scenario | Zone-based | Pose-based |
+|----------|-----------|------------|
+| Security guard walks past window | ❌ Alert fires | ✅ Detected as "walking" — no alert |
+| Criminal smashes glass with tool | ✅ Alert (if in zone) | ✅ Alert (high wrist velocity → "striking") |
+| Two people fighting | ⚠️ Only if near zone | ✅ Alert ("fighting" activity detected) |
+| Person climbs through broken window | ✅ Alert (if in zone) | ✅ Alert (horizontal torso → "climbing") |
+| Nighttime / no zone configured | ❌ No alert | ✅ Still detects activity |
+
+**COCO-17 keypoints used:**
+
+```
+        0 (nose)
+      5   6  (shoulders)
+      7   8  (elbows)
+      9  10  (wrists)
+     11  12  (hips)
+     13  14  (knees)
+     15  16  (ankles)
+```
+
+**Skeleton colour coding in output video:**
+
+| Colour | Activity |
+|--------|----------|
+| Green  | Walking / Standing |
+| Cyan   | Running |
+| Orange | Crouching |
+| Red    | Fighting |
+| Dark red | Striking |
+| Purple | Climbing |
 
 ---
 
-#### `Detection` and `Incident` dataclasses
+### 3.5 Loitering Demo — `demo_loitering.py`
 
-**`Detection`** — a single YOLO box:
+**Purpose:** Demonstrate the full pipeline without a real camera. Generates a synthetic video of a person walking in, browsing, stopping, and triggering a loitering alert at t=42s.
+
+- Uses `yolov8n.pt` pretrained on COCO.
+- Person sprite is rendered with textured skin/clothing and animated walking poses (16 pre-built poses, smooth-step waypoint interpolation).
+- If YOLO misses the synthetic figure, a fallback injection keeps all tracking/alert logic running (badge shows `YOLO` in green or `INJECT` in orange).
+- Outputs `demo_output/loitering_demo.mp4`.
+
+```bash
+python demo_loitering.py              # saves video and opens it
+python demo_loitering.py --display    # also shows live cv2 window
+```
+
+---
+
+## 4. Detection Approach: Zone vs Pose
+
+This section explains when to use each approach.
+
+### Zone-Based (`video_command_center.py`)
+
+**Best when:**
+- Camera positions are fixed and known in advance.
+- Restricted areas have clear physical boundaries (doors, windows, perimeter fences).
+- You want simple, explainable rules with low false-negative rates.
+- Low-power hardware (no GPU) — YOLO object detection only.
+
+**Limitation:** Cannot distinguish *why* a person is in the zone. Any presence triggers an alert.
+
+### Pose-Based (`pose_command_center.py`)
+
+**Best when:**
+- You need to understand *what* people are doing, not just *where* they are.
+- Camera coverage of open areas where anyone might legitimately walk.
+- Night-vision or grainy CCTV — activity is inferred from body shape, not pixel texture.
+- You want fewer false positives from legitimate occupants.
+
+**Limitation:** Requires a person to be visible enough for YOLO to detect and keypoints to be estimated. Unusual camera angles (top-down) reduce pose accuracy.
+
+### Recommended Architecture for Production
+
+```
+YOLOv8n-pose (detection + 17 keypoints)
+    │
+    ├─ Tracking (ByteTrack) ──────────────────────── track_id
+    │
+    ├─ PoseActivityClassifier ──────────────────────  activity label
+    │   (rule-based heuristics, this codebase)         per track per frame
+    │
+    └─ (future) Fine-tuned Action Classifier ──────  more accurate activities
+        Options:
+          · VideoMAE  (Meta, SOTA on Kinetics-700)
+          · SlowFast-R101  (Meta, good for fight/action)
+          · PoseC3D  (pose-based 3D CNN, SOTA for skeleton actions)
+        Training data:
+          · UCF-Crime  (1,900 clips: Burglary, Fighting, Robbery, Vandalism)
+          · RWF-2000   (2,000 CCTV clips: fight vs. non-fight)
+          · Your own labelled clips  (30–50 per class with fine-tuning)
+```
+
+---
+
+## 5. Pose Model Architecture
+
+### YOLOv8n-pose vs YOLOv8n
+
+| Property | `yolov8n.pt` | `yolov8n-pose.pt` |
+|----------|-------------|-------------------|
+| Output per person | bbox + class + conf | bbox + conf + **17 keypoints × (x, y, conf)** |
+| Model size | ~6 MB | ~6 MB |
+| Speed | ~same | ~same (minimal overhead) |
+| What you gain | Object locations | Body posture + motion analysis |
+| Used in | `inference_engine.py`, `video_command_center.py`, `demo_loitering.py` | `pose_command_center.py` |
+
+### PoseActivityClassifier — Signal Details
+
+#### `torso_vert` (vertical orientation ratio)
+
+```
+shoulder_mid = midpoint(left_shoulder, right_shoulder)
+hip_mid      = midpoint(left_hip, right_hip)
+
+dx = |shoulder_mid.x - hip_mid.x|
+dy = |shoulder_mid.y - hip_mid.y|
+
+torso_vert = dy / (dx + dy)   # 1.0 = upright, 0.0 = horizontal
+```
+
+A person climbing through a window has torso_vert ≈ 0.1–0.3.
+A standing person has torso_vert ≈ 0.85–1.0.
+
+#### `wrist_vel` (striking / fighting indicator)
+
+```
+Compare wrist positions between frame[t-5] and frame[t]:
+wrist_vel = max(dist(L_wrist_t, L_wrist_t-5),
+                dist(R_wrist_t, R_wrist_t-5)) / 4   (px/frame)
+```
+
+A person smashing glass has wrist_vel ≈ 12–25 px/frame.
+Normal walking arm swing is ≈ 2–5 px/frame.
+
+#### `body_vel` (running / idle indicator)
+
+```
+Compare hip midpoint between frame[t-5] and frame[t]:
+body_vel = dist(hip_t, hip_t-5) / 4   (px/frame)
+```
+
+Running: ≥ 10 px/frame. Standing still: < 2 px/frame.
+
+#### `arms_raised` (fighting posture)
+
+```
+arms_raised = avg(L_wrist.y, R_wrist.y) < avg(L_shoulder.y, R_shoulder.y)
+```
+
+Note: y increases downward in image coordinates, so lower y = higher in frame.
+Both arms raised above shoulders is characteristic of fighting or reaching.
+
+#### `crouching` (breaking-in approach)
+
+```
+torso_h = |shoulder_mid.y - hip_mid.y|
+leg_h   = |hip_mid.y - ankle_mid.y|
+crouching = (leg_h / torso_h) < 0.85
+```
+
+Normal standing: legs ≈ 1.5× torso height. Crouching compresses the leg segment.
+
+### Brawl Detection Logic
+
+Zone-based brawl: proximity of two bounding-box centroids.
+Pose-based brawl: persons classified as "fighting" or "striking" sustained for ≥ 2 s.
 
 ```python
-class_name: str        # e.g. "brawl"
-confidence: float      # 0.0–1.0
-bbox: [x1,y1,x2,y2]   # pixel coordinates
-track_id: int | None   # ByteTrack persistent ID
+if len(fighters) >= 2:    brawl_s += 1 / fps
+elif len(fighters) == 1:  brawl_s += 0.5 / fps   # single striker — partial credit
+else:                     brawl_s = 0.0           # reset
+
+if brawl_s >= 2.0:  → BRAWL alert
 ```
 
-**`Incident`** — a raised security event:
-
-```python
-id: str                # e.g. "CAM-01_brawl_1714000000"
-camera_id: str         # e.g. "CAM-01"
-threat_type: str       # e.g. "brawl"
-severity: str          # "medium" | "high" | "critical"
-confidence: float
-timestamp: str         # ISO 8601 UTC
-bbox: [x1,y1,x2,y2]
-track_id: int | None
-frame_path: str | None # path to evidence JPEG
-actions: [str]         # what was done (populated by dispatcher)
-resolved: bool         # False by default (for dashboard use)
-```
+This means two strangers standing close together (e.g., a queue) never triggers a brawl alert — they must both show fighting body language.
 
 ---
 
-#### `run(model_path, sources)` — main entry point
+## 6. File-by-File Reference
 
-```python
-model = YOLO(model_path)           # load best.pt
-dispatcher = AlertDispatcher()
-alert_q = queue.Queue()
-
-for i, src in enumerate(sources):
-    proc = CameraProcessor(f"CAM-{i+1:02d}", src, model, alert_q)
-    proc.start()                   # spawns background thread
-
-while True:                        # main thread = alert consumer
-    incident = alert_q.get(timeout=0.5)
-    dispatcher.dispatch(incident)
-```
-
-All `CameraProcessor` threads run concurrently — one per camera. They share a single YOLO model instance and a single `alert_queue`. The main thread drains the queue and dispatches each incident.
-
----
-
-## 4. File-by-File Reference
-
-### `inference_engine.py` (12.6 KB)
+### `inference_engine.py`
 
 | Symbol | Type | Purpose |
-|---|---|---|
-| `THREAT_CONFIG` | dict | Master config: 8 threats with severity, duration, deterrence, notification flags |
-| `CONFIDENCE_THRESHOLD` | float | YOLO minimum confidence (0.45) |
-| `LOITERING_ZONE_RADIUS_PX` | int | Zone radius for loitering in pixels (80) |
+|--------|------|---------|
+| `THREAT_CONFIG` | dict | 9 threats with severity, duration, deterrence, notification |
+| `CONFIDENCE_THRESHOLD` | float | 0.45 |
+| `LOITERING_ZONE_RADIUS_PX` | int | 80 px |
 | `Detection` | dataclass | One YOLO bounding-box result |
 | `Incident` | dataclass | One raised security event |
 | `LoiteringTracker` | class | Per-track dwell-time tracker |
-| `AlertDispatcher` | class | Deterrence + notification + persistence |
-| `CameraProcessor` | class | Per-camera background thread (capture → detect → enqueue) |
-| `run()` | function | Entry point: load model, start processors, consume alert queue |
+| `AlertDispatcher` | class | Deterrence + notification + JSON persistence |
+| `CameraProcessor` | class | Per-camera background thread |
+| `run()` | function | Entry point: load model, start processors, consume queue |
 
 ---
 
-### `train_custom_model.py` (5.4 KB)
+### `video_command_center.py`
 
 | Symbol | Type | Purpose |
-|---|---|---|
-| `DATASET_YAML` | str | Default path for generated YAML |
-| `BASE_MODEL` | str | `"yolov8n.pt"` — download from Ultralytics if not present |
-| `EPOCHS` | int | 100 (overridable) |
-| `PATIENCE` | int | 20 — early stop |
-| `create_dataset_yaml()` | function | Writes YAML with class definitions and split paths |
-| `train()` | function | Fine-tunes YOLOv8 with security augmentations |
-| `export_for_edge()` | function | Converts best.pt to ONNX/TensorRT/etc. |
+|--------|------|---------|
+| `BrawlTracker` | class | Fires when ≥ 2 persons within `BRAWL_PROXIMITY_PX` for ≥ `BRAWL_MIN_DURATION_S` |
+| `BreakingInTracker` | class | Fires once per track when it first enters a restricted zone |
+| `RateLimiter` | class | Per-key cooldown to suppress repeat alerts |
+| `_parse_zones()` | function | Parses `"x1,y1,x2,y2;..."` normalised fractions → pixel tuples |
+| `_extract_persons()` | function | Pulls person detections from YOLO results |
+| `_run_loitering()` | function | Updates LoiteringTracker, fires loitering incidents |
+| `_run_brawl()` | function | Updates BrawlTracker, fires brawl incidents |
+| `_run_breaking_in()` | function | Checks zones, fires breaking-in incidents |
+| `_render_panel()` | function | Draws right-side command center panel |
+| `_render_status()` | function | Draws bottom status bar |
+| `_annotate_video()` | function | Draws boxes, zone overlays, dwell bars on frame |
+| `run()` | function | Main loop: open video → process → write output |
+
+**CLI:**
+```bash
+python video_command_center.py video.mp4 [--display] [--zones "..."] [--skip N]
+```
 
 ---
 
-### `requirements.txt`
+### `pose_command_center.py`
 
-| Package group | Packages | Why |
-|---|---|---|
-| Core AI/CV | `ultralytics`, `torch`, `torchvision`, `opencv-python`, `supervision`, `numpy` | YOLO model, frame capture, drawing |
-| Dataset | `roboflow`, `PyYAML` | Downloading public datasets, writing YAML config |
-| API/Serving | `fastapi`, `uvicorn`, `websockets`, `python-multipart` | Dashboard backend (future use) |
-| Alerting | `requests`, `paho-mqtt`, `twilio` | IoT control, SMS, HTTP webhooks |
+| Symbol | Type | Purpose |
+|--------|------|---------|
+| `KP` | SimpleNamespace | COCO-17 keypoint index constants (NOSE=0 … R_ANKLE=16) |
+| `SKELETON_PAIRS` | list | 14 joint connections for skeleton drawing |
+| `ActivityResult` | class | activity, confidence, signals dict |
+| `PoseActivityClassifier` | class | Per-track pose history + signal computation + classification |
+| `_kp()` | function | Returns (x, y) if keypoint confidence ≥ threshold, else None |
+| `_mid()` | function | Midpoint of two optional keypoints |
+| `_draw_skeleton()` | function | Draws skeleton lines + joint dots on frame |
+| `RateLimiter` | class | Same pattern as video_command_center |
+| `_extract_persons()` | function | Extracts persons + keypoints from pose model results |
+| `_classify_activities()` | function | Runs PoseActivityClassifier for all tracked persons |
+| `_run_loitering()` | function | Standing-idle persons → loitering timer |
+| `_run_brawl()` | function | Fighting/striking persons sustained → brawl alert |
+| `_run_activity_threats()` | function | Climbing/striking → breaking_in; crouching → suspicious |
+| `_render_panel()` | function | Panel with activity breakdown + threat counts + alert log |
+| `run()` | function | Main loop |
+
+**CLI:**
+```bash
+python pose_command_center.py video.mp4 [--display] [--skip N]
+```
+
+**Activity constants:**
+
+| Constant | Value | Triggered by |
+|----------|-------|-------------|
+| `TORSO_CLIMB_THRESH` | 0.38 | torso_vert below this → climbing |
+| `WRIST_FIGHT_VEL` | 6.0 px/frame | + arms_raised → fighting |
+| `WRIST_STRIKE_VEL` | 10.0 px/frame | alone → striking |
+| `BODY_RUN_VEL` | 10.0 px/frame | body moving fast → running |
+| `BODY_IDLE_VEL` | 2.0 px/frame | body still → standing |
+
+---
+
+### `demo_loitering.py`
+
+| Symbol | Type | Purpose |
+|--------|------|---------|
+| `WAYPOINTS` | list | (frame, x, y, phase) tuples defining movement path |
+| `LOITER_START_FRAME` | int | Frame at which LoiteringTracker starts (t=12s) |
+| `build_person_sprite()` | function | Renders textured human silhouette with limb animation |
+| `composite_person()` | function | Alpha-composites sprite onto background frame |
+| `_build_sprite_cache()` | function | Pre-builds 16 walking + 1 standing pose sprites |
+| `_run_yolo()` | function | Runs model.track(); falls back to predict() if needed |
+| `_fire_alert()` | function | Creates and dispatches the loitering Incident |
+| `_render_annotations()` | function | Draws bbox, dwell bar, HUD, phase banner, alert banner |
+| `run()` | function | Main loop: generate frame → YOLO → tracker → annotate → write |
 
 ---
 
 ### `tests/conftest.py`
 
-Shared fixtures available to all test files via pytest's automatic injection:
-
-| Fixture | What it provides |
-|---|---|
-| `loitering_tracker` | Fresh `LoiteringTracker()` instance |
-| `alert_dispatcher` | `AlertDispatcher` with `incidents/` in a temp dir |
-| `mock_model` | `MagicMock` YOLO model with security class names map |
-| `alert_queue` | Empty `queue.Queue()` |
-| `camera_processor` | `CameraProcessor("CAM-01", ...)` using mock_model, in temp dir |
-| `blank_frame` | 640×480 black NumPy array |
-| `sample_incident` | Pre-built `Incident` for brawl |
-
-Also defines:
-- `make_box(cls_id, conf, bbox, track_id)` — builds a mock YOLO `Box` object with the exact attribute structure `_process_frame` reads.
-- `make_results(detections)` — wraps a list of dicts into a mock `model.track()` return value.
-- `CLASS_IDS` — dict mapping class name strings to integer IDs.
+| Symbol | Purpose |
+|--------|---------|
+| `make_box(cls_id, conf, bbox, track_id)` | Mock YOLO box with all attributes `_process_frame` reads |
+| `make_results(detections)` | Wraps list of dicts into mock `model.track()` return |
+| `CLASS_IDS` | Dict: class name → integer ID |
+| `loitering_tracker` fixture | Fresh `LoiteringTracker()` |
+| `alert_dispatcher` fixture | `AlertDispatcher` with temp `incidents/` dir |
+| `mock_model` fixture | MagicMock YOLO with security class names |
+| `camera_processor` fixture | `CameraProcessor` using mock_model |
+| `blank_frame` fixture | 640×480 black NumPy array |
+| `sample_incident` fixture | Pre-built brawl Incident |
 
 ---
 
 ### `tests/generate_test_images.py`
 
-A standalone script that creates synthetic test images using OpenCV drawing primitives. Run once (or at the start of a test session).
+Generates 12 synthetic scenes per threat using OpenCV drawing primitives:
 
-**12 scenes generated:**
-
-| Scene name | Class | What is drawn |
-|---|---|---|
-| `loitering` | person | Single stick figure on a street background |
+| Scene | Class | What is drawn |
+|-------|-------|---------------|
+| `loitering` | person | Single stick figure on street background |
 | `brawl` | brawl | Three overlapping figures with extended arms |
 | `fire` | fire | Orange/red radial gradient + elliptical flame tips |
-| `smoke` | smoke | Stacked grey transparent circles (cumulative overlay) |
+| `smoke` | smoke | Stacked grey transparent circles |
 | `abandoned_bag` | abandoned_bag | Brown rectangle (bag) with strap, no people |
 | `crowd_surge` | crowd_surge | 19 small figures in a tight cluster |
 | `weapon` | weapon | Figure holding an elongated dark shaft |
-| `vehicle_intrusion` | vehicle_intrusion | Car rectangle + roof + windows + wheels in pedestrian zone |
-| `graffiti_vandalism` | graffiti_vandalism | Colourful rectangles and circles on a wall background |
-| `suspicious_package` | suspicious_package | Grey box with tape diagonals and coloured wires |
-| `person_with_fire` | multi | Person on left + fire on right (arson scenario) |
+| `vehicle_intrusion` | vehicle_intrusion | Car rectangle + roof + windows + wheels |
+| `graffiti_vandalism` | graffiti_vandalism | Colourful rectangles on wall background |
+| `suspicious_package` | suspicious_package | Grey box with tape diagonals and wires |
+| `person_with_fire` | multi | Person on left + fire on right |
 | `multiple_loiterers` | multi | Two persons standing far apart |
 
-Each image is saved as:
-- `tests/test_data/images/<class>/<scene>.jpg`
-- `tests/test_data/labels/<class>/<scene>.txt` (YOLO normalised format)
-
-A `manifest.json` records the ground-truth bounding boxes for every scene.
-
 ---
 
-### `tests/test_loitering_tracker.py` — 12 unit tests
+## 7. Data Flow: Frame to Police Alert
 
-Tests `LoiteringTracker` in isolation (no YOLO, no camera, no alerts).
-
-| Test class | What it covers |
-|---|---|
-| `TestLoiteringTrackerFirstSeen` | First call returns 0.0; second call returns positive duration; 31s exceeds threshold; 20s does not |
-| `TestLoiteringTrackerZoneLogic` | Large move resets to 0.0; small move continues; boundary (exactly at radius); diagonal distance |
-| `TestLoiteringTrackerMultipleTracks` | Two tracks are independent; evict_stale removes correct IDs; full eviction; keep-all |
-
----
-
-### `tests/test_alert_dispatcher.py` — 20 unit tests
-
-Tests `AlertDispatcher` in isolation using `patch.object` to intercept the four notification methods.
-
-| Test class | What it covers |
-|---|---|
-| `TestIncidentPersistence` | JSON file created; correct fields; actions list populated; multiple incidents don't clobber each other |
-| `TestNotificationRouting` | Per-threat routing: brawl→police, fire→all, loitering→personnel only, smoke→personnel only, weapon→police, etc. |
-| `TestDeterrenceActions` | Per-threat deterrent: brawl→audio_alarm, fire→sprinkler, weapon→lock_gates, loitering→audio_warning, vehicle→barrier |
-| `TestActionsListContent` | Final `incident.actions` list contains the correct string entries |
-
----
-
-### `tests/test_inference_pipeline.py` — 19 integration tests
-
-Tests `CameraProcessor._process_frame()` end-to-end using a mock YOLO model. Real frame processing, real loitering logic, real rate limiter — only the model is mocked.
-
-| Test class | What it covers |
-|---|---|
-| `TestImmediateThreatDetection` | brawl/weapon/fire/vehicle_intrusion queue incidents immediately; correct severity/confidence |
-| `TestLoiteringDetection` | Person not flagged at 20s; flagged at 31s; movement resets; two independent loiterers both flagged |
-| `TestRateLimiting` | Duplicate suppressed at 30s; allowed again at 61s; different track_ids are independent |
-| `TestConfidenceFiltering` | `model.track()` is called with `conf=CONFIDENCE_THRESHOLD` |
-| `TestTrackIdNone` | Detections without track_id produce no incident |
-| `TestEvidenceSaving` | JPEG exists on disk; path contains incident ID |
-
----
-
-### `tests/test_threat_scenarios.py` — 31 end-to-end tests
-
-Each test loads a synthetic scene image, mocks the model to return ground-truth detections, runs the full pipeline from `_process_frame` through `AlertDispatcher`, and asserts the correct outcome.
-
-| Test class | Assertions |
-|---|---|
-| `TestLoiteringScenario` | Flagged at 31s; severity is medium |
-| `TestBrawlScenario` | Immediate; police notified |
-| `TestFireScenario` | Immediate; sprinkler + all notifications |
-| `TestSmokeScenario` | Immediate; severity high |
-| `TestAbandonedBagScenario` | Detected; police notified |
-| `TestCrowdSurgeScenario` | Detected; severity medium |
-| `TestWeaponScenario` | Immediate; critical; lock_gates + police |
-| `TestVehicleIntrusionScenario` | Immediate; barrier_deploy |
-| `TestGraffitiScenario` | Documents that class is NOT in THREAT_CONFIG → no incident (guard test) |
-| `TestSuspiciousPackageScenario` | Same as graffiti — guard test |
-| `TestMultiThreatScenarios` | Person+fire: fire immediate, loitering at 31s; two loiterers both flagged; weapon+fire both get full responses |
-| `TestSyntheticImageSanity` | All 10 images are 640×480 uint8, non-blank, have valid bboxes within bounds |
-
----
-
-## 5. Data Flow: Frame to Police Alert
-
-Below is the complete path for a brawl event:
+### Zone-based (video_command_center.py)
 
 ```
-[IP Camera — RTSP stream]
-         |
-         | cv2.VideoCapture.read()
-         v
-[CameraProcessor._run()]                           (background thread)
-  │  frame_idx % 2 == 0?  → skip odd frames
-  │
-  v
-[CameraProcessor._process_frame(frame)]
-  │  model.track(frame, conf=0.45, tracker="bytetrack.yaml")
-  │                        ↑
-  │               Returns list of Results, each with .boxes
-  │
-  │  for each box:
-  │    cls_id=2 → "brawl"
-  │    conf=0.87
-  │    bbox=[110, 180, 450, 410]
-  │    track_id=7
-  │
-  │  "brawl" is in THREAT_CONFIG, is not "person"
-  │    → _maybe_raise(det, "brawl", frame, frame_idx)
-  │
-  v
-[CameraProcessor._maybe_raise()]
-  │  key = "7:brawl"
-  │  now - _alerted["7:brawl"] (=0) = large number ≥ 60 → proceed
-  │  _alerted["7:brawl"] = now
-  │  inc_id = "CAM-01_brawl_1714000000"
-  │
-  │  _save_evidence(frame, inc_id)
-  │    └→ cv2.imwrite("evidence/CAM-01_brawl_1714000000.jpg")
-  │
-  │  incident = Incident(id, camera_id="CAM-01", threat_type="brawl",
-  │                       severity="high", confidence=0.87, ...)
-  │  alert_queue.put(incident)
-  │
-  v
-[Main thread — run() loop]
-  │  alert_q.get()  → receives incident
-  │  dispatcher.dispatch(incident)
-  │
-  v
-[AlertDispatcher.dispatch()]
-  │  cfg = THREAT_CONFIG["brawl"]
-  │    deter_action = "audio_alarm"     → _trigger_deterrence()  [MQTT/REST stub]
-  │    notify_personnel = True          → _notify_personnel()     [FCM/PagerDuty stub]
-  │    notify_police    = True          → _notify_police()        [dispatch API stub]
-  │
-  │  incident.actions = ["deter:audio_alarm", "notify:personnel", "notify:police"]
-  │
-  │  _save_incident(incident)
-  │    └→ json.dump(asdict(incident), "incidents/CAM-01_brawl_1714000000.json")
-  │
-  v
-[Incident JSON on disk — for dashboard / audit trail]
+Video frame
+  └─ cv2.resize to 868×540
+  └─ model.track(conf=0.20, tracker="bytetrack.yaml")
+        └─ for each person box:
+              cx, cy = centroid
+              LoiteringTracker.update(tid, cx, cy) → dwell_s
+              if dwell_s ≥ 20s → loitering alert
+              BrawlTracker.update(all_centroids) → brawl_s
+              if brawl_s ≥ 2s → brawl alert
+              BreakingInTracker.check(tid, cx, cy) → in_zone?
+              if in_zone (first time) → breaking_in alert
+  └─ RateLimiter: suppress repeat alerts within 30s per track+threat
+  └─ AlertDispatcher.dispatch(incident)
+        └─ THREAT_CONFIG lookup → actions
+        └─ incidents/<id>.json written
+  └─ Command center canvas rendered + written to MP4
+```
+
+### Pose-based (pose_command_center.py)
+
+```
+Video frame
+  └─ yolov8n-pose.track() → persons with 17 keypoints each
+        └─ PoseActivityClassifier.update(tid, kps_xy, kps_conf)
+              └─ torso_vert, wrist_vel, body_vel, arms_raised, crouching
+              └─ classify → "climbing" | "striking" | "fighting" | etc.
+        └─ Activity → Threat mapping:
+              "climbing" / "striking"  → breaking_in (immediate)
+              "fighting" sustained     → brawl
+              "standing" ≥ 20s         → loitering
+              "crouching"              → suspicious
+  └─ AlertDispatcher.dispatch(incident)
+        └─ timestamp includes: "activity=striking"
+        └─ incidents/<id>.json written
+  └─ Skeleton drawn on video frame (colour = activity)
+  └─ Command center canvas → MP4
 ```
 
 ---
 
-## 6. Threat Catalogue
+## 8. Threat Catalogue
 
 | Threat | Severity | Min wait | Physical response | Notifications |
-|---|---|---|---|---|
-| loitering | medium | 30 s | Audio warning | Personnel |
-| brawl | high | 0 s (immediate) | Audio alarm | Personnel, Police |
-| fire | critical | 0 s | Sprinkler trigger | Personnel, Police, Fire Dept |
+|--------|----------|----------|-------------------|---------------|
+| loitering | medium | 20 s | Audio warning | Personnel |
+| brawl | high | immediate | Audio alarm | Personnel, Police |
+| fire | critical | immediate | Sprinkler | Personnel, Police, Fire |
 | smoke | high | 5 s | Audio warning | Personnel |
 | abandoned_bag | high | 60 s | Audio announcement | Personnel, Police |
 | crowd_surge | medium | 10 s | Crowd speaker | Personnel |
-| weapon | critical | 0 s | Lock gates | Personnel, Police |
-| vehicle_intrusion | high | 0 s | Barrier deploy | Personnel, Police |
+| weapon | critical | immediate | Lock gates | Personnel, Police |
+| vehicle_intrusion | high | immediate | Barrier deploy | Personnel, Police |
+| **breaking_in** | **critical** | **immediate** | **Lock gates** | **Personnel, Police** |
 | graffiti_vandalism | — | not in THREAT_CONFIG yet | — | — |
 | suspicious_package | — | not in THREAT_CONFIG yet | — | — |
 
 ---
 
-## 7. Key Design Decisions
+## 9. Key Design Decisions
 
-### Frame skipping (`frame_idx % 2 != 0`)
-Every other frame is discarded before inference. At 30 fps this still gives 15 detections/second per camera — more than enough — while halving GPU/CPU load. Adjust to `% 3` for 10 fps or `% 1` to process every frame.
+### Zone-based vs Pose-based detection
+
+Zone-based is faster to configure and has zero false negatives for any presence-in-zone. Pose-based has far fewer false positives (legitimate occupants do not trigger alerts) but requires the person to be visible enough for skeleton estimation.
+
+For production deployments, **both can run simultaneously**: zone-based for high-security perimeters, pose-based for open areas.
 
 ### ByteTrack persistent tracking
-YOLO's `model.track(persist=True)` re-uses ByteTrack state between calls on the same `CameraProcessor` instance. This is what makes `track_id` values stable across frames, which is essential for the loitering timer and the rate limiter. Without it every frame would assign new IDs.
 
-### Shared model, per-camera processors
-All `CameraProcessor` instances share a single `YOLO` model object. PyTorch model inference is thread-safe for reads. This avoids loading the weights N times for N cameras.
+`model.track(persist=True)` keeps ByteTrack state between frames on the same processor instance. Stable `track_id` values across frames are essential for the loitering timer, velocity history, and rate limiter. Without persistence, every frame assigns new IDs and nothing accumulates.
 
-### Queue-based incident dispatch
-`CameraProcessor` threads only enqueue `Incident` objects — they never call `AlertDispatcher` directly. The main thread drains the queue. This decouples fast frame-processing from potentially slow I/O (HTTP calls, file writes) so camera threads never block.
+### Pose history buffer (20 frames)
+
+`PoseActivityClassifier` keeps a `deque(maxlen=20)` of keypoint snapshots per track. Velocity is computed over the last 5 frames, not adjacent frames — this smooths out detection noise and prevents single-frame twitches from triggering alerts.
 
 ### Rate limiter key: `{track_id}:{threat}`
-Alerts are suppressed for 60 seconds per track+threat combination. If track 7 triggers a brawl alert, track 8 brawling at the same time still fires. If track 7 is also detected as a person (loitering), that fires independently under key `7:loitering`.
 
-### Loitering uses "person" class, not a dedicated "loitering" class
-The model outputs `class_name="person"` for anyone it sees. The loitering decision is made purely in Python by measuring how long that person has been in an 80-pixel-radius zone. A dedicated `loitering` training class can be used to train the model to recognise loitering body language directly, but the current pipeline handles it post-detection.
+Alerts are suppressed for 30 s (video time) per track+threat. Different track IDs fire independently. This prevents alert floods during a prolonged incident while still capturing a second independent threat.
+
+### Simulated video time for loitering
+
+`LoiteringTracker` calls `time.time()` internally. When processing recorded video faster than real time, real wall-clock time would undercount dwell time. The command centers use `unittest.mock.patch("inference_engine.time.time", return_value=VIDEO_BASE_T + video_t)` to inject video timestamp, ensuring accurate 20 s loitering detection regardless of processing speed.
+
+### Frame skipping (`--skip 2`)
+
+At the default `--skip 2`, every other frame is processed. The 40 fps source becomes effectively 20 fps input to YOLO. This halves CPU/GPU load with negligible impact on detection quality — a person's activity does not change meaningfully in 50 ms.
+
+### Confidence threshold 0.20 (night footage)
+
+The production inference engine uses `CONF_THRESHOLD = 0.45`. The command centers drop it to `0.20` because the test footage (`loitering2.mov`) is grainy night-vision CCTV from 2012. A real deployment should tune this per camera.
 
 ---
 
-## 8. Test Suite Architecture
+## 10. Test Suite Architecture
 
 ```
 pytest
@@ -588,101 +690,148 @@ pytest
   │
   ├── test_alert_dispatcher.py    ← pure unit, file IO only
   │     patches: AlertDispatcher._notify_* methods
-  │     uses:    tmp_path (pytest built-in) for incidents/
+  │     uses:    tmp_path for incidents/
   │
-  ├── test_inference_pipeline.py  ← integration, uses real frame processing
-  │     mocks:   model.track() return value (make_results helper)
-  │     patches: time.time for loitering and rate-limiter control
+  ├── test_inference_pipeline.py  ← integration, real frame processing
+  │     mocks:   model.track() via make_results()
+  │     patches: time.time
   │     uses:    tmp_path for evidence/
   │
-  └── test_threat_scenarios.py    ← end-to-end, uses synthetic images
-        auto-generates test images via session fixture
+  └── test_threat_scenarios.py    ← end-to-end, synthetic images
+        auto-generates test data via session fixture
         mocks:   model.track() per scene
-        patches: time.time where loitering timing matters
-        asserts: complete pipeline output (incident type, severity, actions)
+        patches: time.time where loitering matters
+        asserts: incident type, severity, actions list
 ```
 
 **Why no real-model tests?**
-The custom model (`best.pt`) does not exist in the repo until you run training on your own dataset. All tests use a mock model and inject synthetic detections. The pipeline logic (loitering, rate limiting, dispatch) is fully tested independently of model accuracy. When you have a trained model, you can write additional slow-marked tests that load `best.pt` and run it on real or synthetic images to validate model accuracy separately.
+The custom model (`best.pt`) does not exist until you run training. All tests mock the model and inject synthetic detections. The pipeline logic is fully exercised independently of model accuracy. Slow/integration tests that load `yolov8n-pose.pt` on real frames can be added as optional markers when needed.
 
 ---
 
-## 9. Known Gaps and Extension Points
+## 11. Known Gaps and Extension Points
 
 | Gap | Location | How to fix |
-|---|---|---|
-| `graffiti_vandalism` not in `THREAT_CONFIG` | `inference_engine.py:32–87` | Add entry; update guard tests in `test_threat_scenarios.py` |
+|-----|----------|------------|
+| `graffiti_vandalism` not in `THREAT_CONFIG` | `inference_engine.py:32` | Add entry; update guard tests |
 | `suspicious_package` not in `THREAT_CONFIG` | same | same |
-| `min_duration_s` for non-person threats not enforced | `_process_frame` lines 284–287 | Add a duration tracker similar to `LoiteringTracker` for smoke/crowd_surge/abandoned_bag |
-| All notification methods are stubs | `AlertDispatcher` lines 177–196 | Replace with real MQTT/FCM/Twilio/REST calls |
-| No deduplication across cameras | `run()` | Two cameras seeing the same event create two separate incidents |
-| No dashboard UI | `requirements.txt` has FastAPI/WebSocket | Build a FastAPI app that serves `incidents/*.json` and streams WebSocket alerts |
-| Evidence directory fills indefinitely | `_save_evidence` | Add a cron job or retention policy |
+| Pose classifier is rule-based, not learned | `pose_command_center.py` | Fine-tune VideoMAE or PoseC3D on UCF-Crime |
+| `torso_vert` unreliable on top-down cameras | `PoseActivityClassifier` | Add camera-angle calibration or retrain pose model |
+| All notification methods are stubs | `AlertDispatcher` | Replace with MQTT/FCM/Twilio/REST |
+| No multi-camera deduplication | `run()` | Two cameras seeing same event = two incidents |
+| No dashboard UI | `requirements.txt` has FastAPI/WebSocket | Build FastAPI app serving `incidents/*.json` |
+| Evidence directory fills indefinitely | `_save_evidence` | Add retention / cron purge |
 | No authentication on notifications | `_notify_police` | Add API key management |
+| Pose-based brawl needs ≥ 2 visible fighters | `_run_brawl()` | Partial credit for 1 fighter already implemented (0.5×) |
 
 ---
 
-## 10. Dependency Map
+## 12. Dependency Map
 
 ```
 inference_engine.py
- ├── ultralytics.YOLO           ← model loading, .track(), class names
- ├── cv2 (opencv-python)         ← VideoCapture, imwrite
- ├── numpy                       ← frame arrays
- ├── threading                   ← CameraProcessor background threads
- ├── queue                       ← alert_queue between threads
- ├── json / pathlib              ← incident persistence
- └── time / datetime             ← loitering timer, timestamps
+ ├── ultralytics.YOLO    ← model loading, .track(), class names
+ ├── cv2                 ← VideoCapture, imwrite
+ ├── numpy               ← frame arrays
+ ├── threading / queue   ← background threads + alert queue
+ ├── json / pathlib      ← incident persistence
+ └── time / datetime     ← loitering timer, timestamps
+
+video_command_center.py
+ ├── inference_engine    ← AlertDispatcher, Incident, LoiteringTracker
+ ├── ultralytics.YOLO    ← yolov8n.pt (object detection)
+ ├── cv2 / numpy         ← video I/O, drawing
+ └── unittest.mock       ← time.time injection for accurate video-time loitering
+
+pose_command_center.py
+ ├── inference_engine    ← AlertDispatcher, Incident, LoiteringTracker
+ ├── ultralytics.YOLO    ← yolov8n-pose.pt (pose estimation)
+ ├── cv2 / numpy         ← video I/O, skeleton drawing
+ ├── types.SimpleNamespace ← KP keypoint index constants
+ └── unittest.mock       ← time.time injection
+
+demo_loitering.py
+ ├── inference_engine    ← AlertDispatcher, Incident, LoiteringTracker
+ ├── ultralytics.YOLO    ← yolov8n.pt
+ ├── cv2 / numpy / math  ← sprite rendering, compositing, animation
+ └── unittest.mock       ← time.time injection for simulated time
 
 train_custom_model.py
- ├── ultralytics.YOLO            ← model training and export
- ├── torch                       ← device detection (cuda/cpu)
- ├── yaml (PyYAML)               ← dataset YAML generation
- └── pathlib / datetime          ← paths and run naming
+ ├── ultralytics.YOLO    ← training + export
+ ├── torch               ← device detection
+ └── yaml / pathlib      ← dataset config
 
-requirements.txt (installed but not yet wired in)
- ├── fastapi + uvicorn + websockets  ← future dashboard API
- ├── paho-mqtt                        ← future deterrence device control
- ├── twilio                           ← future SMS notifications
- ├── requests                         ← future HTTP webhooks
+requirements.txt (installed, not yet wired)
+ ├── fastapi + uvicorn + websockets  ← future dashboard
+ ├── paho-mqtt                        ← future IoT control
+ ├── twilio                           ← future SMS
  └── roboflow                         ← future dataset download
 ```
 
 ---
 
-## 11. Quickstart
+## 13. Quickstart
 
 ```bash
-# ── 1. Create venv and install all dependencies ──────────────────────────────
+# ── 0. Set up virtual environment ────────────────────────────────────────────
 bash setup_venv.sh
-source .venv/bin/activate
+source venv/bin/activate          # NOTE: venv/, not .venv/
 
-# ── 2a. Use a pre-trained base model (no custom training needed) ─────────────
-#   YOLOv8n detects "person" → loitering logic still works
-python inference_engine.py --model yolov8n.pt --sources 0   # 0 = webcam
+# ── 1. Run the loitering demo (no real camera needed) ────────────────────────
+python3.11 demo_loitering.py
+# Output: demo_output/loitering_demo.mp4
+# Alert fires at t=42s (person stops at 12s + 30s dwell threshold)
 
-# ── 2b. Train a custom model on your own footage ─────────────────────────────
-#   Step 1: annotate footage with tools like Roboflow or CVAT
-#           Save images to dataset/images/{train,val,test}/
-#           Save YOLO labels to dataset/labels/{train,val,test}/
-#   Step 2:
-python train_custom_model.py
-#   Outputs: security-model/<run>/weights/best.pt
+# ── 2. Zone-based analysis on a real video ───────────────────────────────────
+python3.11 video_command_center.py ~/Downloads/loitering2.mov
+# Output: demo_output/command_center_output.mp4
+# Default zone: left 8–38% of frame width (building storefront area)
 
-# ── 3. Run inference with custom model ───────────────────────────────────────
-python inference_engine.py \
-    --model security-model/<run>/weights/best.pt \
+# Custom zones (normalised fractions of frame):
+python3.11 video_command_center.py video.mp4 \
+    --zones "0.0,0.0,0.35,1.0;0.65,0.0,1.0,1.0"   # left + right walls
+
+# ── 3. Pose-based analysis (no zones — activity recognition) ─────────────────
+python3.11 pose_command_center.py ~/Downloads/loitering2.mov
+# Output: demo_output/pose_command_center_output.mp4
+# Detects: climbing, striking, fighting, running, crouching, standing, walking
+# Alerts: breaking_in (striking), brawl (fighting), loitering (standing ≥20s)
+
+# Show live window while processing:
+python3.11 pose_command_center.py video.mp4 --display
+
+# Process every 3rd frame (faster on slow machines):
+python3.11 pose_command_center.py video.mp4 --skip 3
+
+# ── 4. Train a custom model on your own footage ──────────────────────────────
+# Annotate footage with Roboflow or CVAT, then:
+python3.11 train_custom_model.py
+# Output: security-model/<run>/weights/best.pt
+
+# ── 5. Live inference on RTSP cameras ────────────────────────────────────────
+python3.11 inference_engine.py \
+    --model yolov8n.pt \
     --sources rtsp://192.168.1.10:554/stream1,rtsp://192.168.1.11:554/stream1
 
-# ── 4. Run the test suite ─────────────────────────────────────────────────────
-pytest                          # all 82 tests
-pytest tests/test_loitering_tracker.py   # just loitering unit tests
-pytest -v -k "brawl"            # only brawl-related tests
+# ── 6. Run the full test suite ───────────────────────────────────────────────
+python3.11 -m pytest                                   # all tests
+python3.11 -m pytest tests/test_loitering_tracker.py  # loitering unit tests
+python3.11 -m pytest -v -k "brawl"                    # brawl tests only
 
-# ── 5. (Re)generate synthetic test images ────────────────────────────────────
-python tests/generate_test_images.py
+# ── 7. Regenerate synthetic test images ──────────────────────────────────────
+python3.11 tests/generate_test_images.py
 ```
+
+### Choosing the right script
+
+| You want to… | Use |
+|---|---|
+| Run on live RTSP camera streams | `inference_engine.py` |
+| Analyse a recorded video with fixed restricted zones | `video_command_center.py` |
+| Analyse a recorded video with activity/pose intelligence | `pose_command_center.py` |
+| Demonstrate the pipeline without any camera | `demo_loitering.py` |
+| Train a custom model for your environment | `train_custom_model.py` |
 
 ---
 
-*Document generated from source code as of 2026-03-19.*
+*Document updated 2026-03-19 — covers inference_engine, train_custom_model, video_command_center, pose_command_center, demo_loitering, and the full test suite.*

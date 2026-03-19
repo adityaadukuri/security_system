@@ -3,15 +3,15 @@
   "camera_id": "CAM-01",
   "threat_type": "breaking_in",
   "severity": "critical",
-  "confidence": 0.31895309686660767,
-  "timestamp": "video+0:00:30",
+  "confidence": 0.8367561101913452,
+  "timestamp": "video+0:00:30 (activity=striking)",
   "bbox": [
-    268.68231201171875,
-    178.2199249267578,
-    327.7192687988281,
-    412.8645324707031
+    322.0569763183594,
+    192.75633239746094,
+    389.84228515625,
+    428.42822265625
   ],
-  "track_id": 61,
+  "track_id": 35,
   "frame_path": null,
   "actions": [
     "deter:lock_gates",
